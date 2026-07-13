@@ -23,6 +23,24 @@ const R2_BUCKET = process.env.R2_BUCKET;
 const R2_PUBLIC_BASE = process.env.R2_PUBLIC_BASE;   // z.B. https://clips.deinedomain.de  (öffentliche R2-URL)
 const PORT = process.env.PORT || 8080;
 
+// ---- YouTube-Cookies ----
+// Railway hat kein dauerhaftes Dateisystem, daher kommt der Cookie-Inhalt als
+// Umgebungsvariable YT_COOKIES_CONTENT (Netscape-Format) und wird beim Start
+// in eine Datei geschrieben, die yt-dlp per --cookies nutzt.
+const COOKIE_PATH = "/tmp/yt-cookies.txt";
+let COOKIES_READY = false;
+if (process.env.YT_COOKIES_CONTENT && process.env.YT_COOKIES_CONTENT.trim()) {
+  try {
+    fs.writeFileSync(COOKIE_PATH, process.env.YT_COOKIES_CONTENT);
+    COOKIES_READY = true;
+    console.log("YouTube-Cookies geladen:", COOKIE_PATH);
+  } catch (e) {
+    console.error("Konnte Cookie-Datei nicht schreiben:", e.message);
+  }
+} else {
+  console.log("Keine YT_COOKIES_CONTENT gesetzt — laufe ohne Cookies.");
+}
+
 const s3 = new S3Client({
   region: "auto",
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -98,15 +116,15 @@ app.post("/clip", async (req, res) => {
       "bv*[height<=720][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
       "--merge-output-format",
       "mp4",
-      // 2026er Anti-Bot-Absicherung: iOS-Client + Deno-JS-Runtime sind im Image vorhanden
+      // Mit Cookies funktioniert der web-Client zuverlässig; ios als Fallback.
       "--extractor-args",
-      "youtube:player_client=default,ios",
+      "youtube:player_client=default,web_safari,ios",
       "-o",
       fullPath,
       videoUrl,
     ];
-    if (process.env.YT_COOKIES_FILE && fs.existsSync(process.env.YT_COOKIES_FILE)) {
-      dlArgs.unshift("--cookies", process.env.YT_COOKIES_FILE);
+    if (COOKIES_READY && fs.existsSync(COOKIE_PATH)) {
+      dlArgs.unshift("--cookies", COOKIE_PATH);
     }
     await runYtDlp(dlArgs);
 
