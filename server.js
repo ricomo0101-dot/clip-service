@@ -81,16 +81,24 @@ app.post("/clip", async (req, res) => {
   const key = `clips/${id}.mp4`;
 
   try {
-    // --download-sections lädt NUR das gewünschte Segment (schnell, wenig Traffic)
-    // --force-keyframes-at-cuts => saubere Schnittkanten
+    // --download-sections lädt NUR das gewünschte Segment (schnell, wenig Traffic).
+    // Wichtig fuer wenig RAM: max. 720p laden UND ffmpeg per copy schneiden (kein Re-Encode),
+    // sonst wird ffmpeg auf kleinen Containern per OOM (exit -9) gekillt.
     const args = [
       "--download-sections",
       `*${start}-${end}`,
-      "--force-keyframes-at-cuts",
+      // KEIN --force-keyframes-at-cuts => kein Neu-Kodieren => sehr wenig RAM
       "-f",
-      "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/b",
+      "bv*[height<=720][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
       "--merge-output-format",
       "mp4",
+      // Downloader-seitig ohne Re-Encode zuschneiden
+      "--downloader",
+      "ffmpeg",
+      "--downloader-args",
+      "ffmpeg_i:-avoid_negative_ts make_zero",
+      "--postprocessor-args",
+      "ffmpeg:-c copy",
       // 2026er Anti-Bot-Absicherung: iOS-Client + Deno-JS-Runtime sind im Image vorhanden
       "--extractor-args",
       "youtube:player_client=default,ios",
