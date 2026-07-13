@@ -42,17 +42,21 @@ function toSeconds(ts) {
   return null;
 }
 
-function runYtDlp(args) {
+function runCmd(bin, args) {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     proc.stderr.on("data", (d) => (stderr += d.toString()));
     proc.stdout.on("data", (d) => process.stdout.write(d)); // Fortschritt in die Logs
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`yt-dlp exit ${code}: ${stderr.slice(-2000)}`));
+      else reject(new Error(`${bin} exit ${code}: ${stderr.slice(-1500)}`));
     });
   });
+}
+
+function runYtDlp(args) {
+  return runCmd("yt-dlp", args);
 }
 
 app.get("/", (_req, res) => res.send("clip-service läuft"));
@@ -84,38 +88,49 @@ app.post("/clip", async (req, res) => {
     // --download-sections lädt NUR das gewünschte Segment (schnell, wenig Traffic).
     // Wichtig fuer wenig RAM: max. 720p laden UND ffmpeg per copy schneiden (kein Re-Encode),
     // sonst wird ffmpeg auf kleinen Containern per OOM (exit -9) gekillt.
-    const args = [
-      "--download-sections",
-      `*${start}-${end}`,
-      // KEIN --force-keyframes-at-cuts => kein Neu-Kodieren => sehr wenig RAM
+    console.log(`[v3-copy] Lade 720p und schneide per copy: ${start}-${end}`);
+    const fullPath = path.join("/tmp", `${id}-full.mp4`);
+
+    // SCHRITT 1: ganzes Video in max. 720p laden. KEIN --download-sections
+    // (das erzwingt intern ein ffmpeg-Re-Encode und killt den Container per OOM).
+    const dlArgs = [
       "-f",
       "bv*[height<=720][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
       "--merge-output-format",
       "mp4",
-      // Downloader-seitig ohne Re-Encode zuschneiden
-      "--downloader",
-      "ffmpeg",
-      "--downloader-args",
-      "ffmpeg_i:-avoid_negative_ts make_zero",
-      "--postprocessor-args",
-      "ffmpeg:-c copy",
       // 2026er Anti-Bot-Absicherung: iOS-Client + Deno-JS-Runtime sind im Image vorhanden
       "--extractor-args",
       "youtube:player_client=default,ios",
       "-o",
-      outPath,
+      fullPath,
       videoUrl,
     ];
-
-    // Optional: falls du ein Cookie-File hinterlegst (gegen "confirm you're not a bot")
     if (process.env.YT_COOKIES_FILE && fs.existsSync(process.env.YT_COOKIES_FILE)) {
-      args.unshift("--cookies", process.env.YT_COOKIES_FILE);
+      dlArgs.unshift("--cookies", process.env.YT_COOKIES_FILE);
+    }
+    await runYtDlp(dlArgs);
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error("Download fehlgeschlagen — Datei nicht gefunden");
     }
 
-    await runYtDlp(args);
+    // SCHRITT 2: Segment per ffmpeg COPY herausschneiden (kein Re-Encode = minimal RAM).
+    // -ss vor -i => schnelles Seeken; -c copy => Streams werden nur umkopiert.
+    await runCmd("ffmpeg", [
+      "-y",
+      "-ss", String(start),
+      "-to", String(end),
+      "-i", fullPath,
+      "-c", "copy",
+      "-avoid_negative_ts", "make_zero",
+      "-threads", "1",
+      outPath,
+    ]);
+
+    try { fs.unlinkSync(fullPath); } catch (_) {}
 
     if (!fs.existsSync(outPath)) {
-      throw new Error("Ausgabedatei nicht gefunden — Download fehlgeschlagen");
+      throw new Error("Schnitt fehlgeschlagen — Ausgabedatei nicht gefunden");
     }
 
     const body = fs.readFileSync(outPath);
