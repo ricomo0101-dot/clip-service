@@ -96,12 +96,14 @@ app.post("/clip", async (req, res) => {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  const { videoUrl, startTime, endTime, title } = req.body || {};
+  const { videoUrl, startTime, endTime, title, format } = req.body || {};
   if (!videoUrl || startTime == null || endTime == null) {
     return res
       .status(400)
       .json({ error: "videoUrl, startTime und endTime sind Pflicht" });
   }
+  // Zielformat: "crop" (Center-Crop, Standard) oder "blur" (unscharfer Hintergrund).
+  const fmt = (format || "crop").toLowerCase();
 
   const start = toSeconds(startTime);
   const end = toSeconds(endTime);
@@ -146,14 +148,34 @@ app.post("/clip", async (req, res) => {
       throw new Error("Download fehlgeschlagen — Datei nicht gefunden");
     }
 
-    // SCHRITT 2: Segment per ffmpeg COPY herausschneiden (kein Re-Encode = minimal RAM).
-    // -ss vor -i => schnelles Seeken; -c copy => Streams werden nur umkopiert.
+    // SCHRITT 2: Segment schneiden UND auf 9:16 (1080x1920) bringen.
+    // Zwei Modi:
+    //  - crop: mittleren Ausschnitt formatfüllend zuschneiden (Standard)
+    //  - blur: ganzes Bild sichtbar, oben/unten unscharfer Hintergrund
+    // Hinweis: 9:16 erfordert Re-Encode (kein -c copy). Ein Thread + veryfast
+    // hält den Speicherbedarf auf dem kleinen Container niedrig.
+    const cropFilter =
+      "crop=ih*9/16:ih,scale=1080:1920:force_original_aspect_ratio=increase," +
+      "crop=1080:1920,setsar=1";
+    const blurFilter =
+      "split[a][b];" +
+      "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=20[bg];" +
+      "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg];" +
+      "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1";
+    const vf = fmt === "blur" ? blurFilter : cropFilter;
+    console.log(`[v4-9x16] Format: ${fmt}`);
+
     await runCmd("ffmpeg", [
       "-y",
       "-ss", String(start),
       "-to", String(end),
       "-i", fullPath,
-      "-c", "copy",
+      "-vf", vf,
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "23",
+      "-c:a", "aac",
+      "-b:a", "128k",
       "-avoid_negative_ts", "make_zero",
       "-threads", "1",
       outPath,
