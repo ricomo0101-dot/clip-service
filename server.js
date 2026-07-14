@@ -41,6 +41,17 @@ if (process.env.YT_COOKIES_CONTENT && process.env.YT_COOKIES_CONTENT.trim()) {
   console.log("Keine YT_COOKIES_CONTENT gesetzt — laufe ohne Cookies.");
 }
 
+// ---- Proxy (Webshare o.ä.) ----
+// Vollständige Proxy-URL, z.B. http://user:pass@host:port
+// Wird an yt-dlp per --proxy übergeben, damit YouTube eine Wohn-IP statt der
+// Railway-Rechenzentrums-IP sieht.
+const YT_PROXY = (process.env.YT_PROXY || "").trim();
+if (YT_PROXY) {
+  console.log("Proxy aktiv.");
+} else {
+  console.log("Kein YT_PROXY gesetzt — laufe ohne Proxy.");
+}
+
 const s3 = new S3Client({
   region: "auto",
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -125,6 +136,9 @@ app.post("/clip", async (req, res) => {
     ];
     if (COOKIES_READY && fs.existsSync(COOKIE_PATH)) {
       dlArgs.unshift("--cookies", COOKIE_PATH);
+    }
+    if (YT_PROXY) {
+      dlArgs.unshift("--proxy", YT_PROXY);
     }
     await runYtDlp(dlArgs);
 
