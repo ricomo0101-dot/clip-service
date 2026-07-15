@@ -116,15 +116,19 @@ app.post("/clip", async (req, res) => {
   const key = `clips/${id}.mp4`;
 
   try {
-    // --download-sections lädt NUR das gewünschte Segment (schnell, wenig Traffic).
-    // Wichtig fuer wenig RAM: max. 720p laden UND ffmpeg per copy schneiden (kein Re-Encode),
-    // sonst wird ffmpeg auf kleinen Containern per OOM (exit -9) gekillt.
-    console.log(`[v3-copy] Lade 720p und schneide per copy: ${start}-${end}`);
+    // Lädt NUR das gewünschte Segment (spart Proxy-Volumen und Zeit),
+    // danach 9:16-Konvertierung auf dem bereits kurzen Ausschnitt.
+    console.log(`[v5-section] Lade nur Segment ${start}-${end}s in 720p`);
     const fullPath = path.join("/tmp", `${id}-full.mp4`);
 
-    // SCHRITT 1: ganzes Video in max. 720p laden. KEIN --download-sections
-    // (das erzwingt intern ein ffmpeg-Re-Encode und killt den Container per OOM).
+    // SCHRITT 1: NUR das Segment laden.
+    // --download-sections + ffmpeg-Downloader => yt-dlp holt per HTTP-Range nur
+    // den benoetigten Bereich. Ohne --force-keyframes-at-cuts, damit nicht neu
+    // kodiert wird (das war der OOM-Killer).
     const dlArgs = [
+      "--download-sections", `*${start}-${end}`,
+      "--downloader", "ffmpeg",
+      "--downloader-args", "ffmpeg:-threads 1",
       "-f",
       "bv*[height<=720][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
       "--merge-output-format",
@@ -167,8 +171,6 @@ app.post("/clip", async (req, res) => {
 
     await runCmd("ffmpeg", [
       "-y",
-      "-ss", String(start),
-      "-to", String(end),
       "-i", fullPath,
       "-vf", vf,
       "-c:v", "libx264",
