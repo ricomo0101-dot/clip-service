@@ -152,12 +152,13 @@ app.post("/clip", async (req, res) => {
       throw new Error("Download fehlgeschlagen — Datei nicht gefunden");
     }
 
-    // SCHRITT 2: Segment schneiden UND auf 9:16 (1080x1920) bringen.
-    // Zwei Modi:
-    //  - crop: mittleren Ausschnitt formatfüllend zuschneiden (Standard)
-    //  - blur: ganzes Bild sichtbar, oben/unten unscharfer Hintergrund
-    // Hinweis: 9:16 erfordert Re-Encode (kein -c copy). Ein Thread + veryfast
-    // hält den Speicherbedarf auf dem kleinen Container niedrig.
+    // SCHRITT 2: Auf 9:16 (1080x1920) bringen. Vier Modi:
+    //  - crop   : mittlerer Ausschnitt, formatfüllend (Standard, engster Zoom)
+    //  - crop70 / crop80 / crop90 : sanfterer Crop, schwarze Balken oben/unten
+    //  - pad    : ganzes Bild sichtbar, schwarze Balken oben/unten (kein Zoom)
+    //  - blur   : ganzes Bild sichtbar, unscharfer Hintergrund
+    // Hinweis: 9:16 erfordert Re-Encode. Ein Thread + veryfast hält den
+    // Speicherbedarf auf dem kleinen Container niedrig.
     const cropFilter =
       "crop=ih*9/16:ih,scale=1080:1920:force_original_aspect_ratio=increase," +
       "crop=1080:1920,setsar=1";
@@ -166,8 +167,30 @@ app.post("/clip", async (req, res) => {
       "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=20[bg];" +
       "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg];" +
       "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1";
-    const vf = fmt === "blur" ? blurFilter : cropFilter;
-    console.log(`[v4-9x16] Format: ${fmt}`);
+    // pad: komplettes Bild einpassen, Rest schwarz
+    const padFilter =
+      "scale=1080:1920:force_original_aspect_ratio=decrease," +
+      "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1";
+
+    // crop70/80/90: Breite = ih*9/16 geteilt durch Faktor => weniger Zoom.
+    // Danach auf 1080 Breite skalieren und mit Schwarz auf 1920 Höhe auffüllen.
+    function partialCrop(pct) {
+      const f = pct / 100; // 0.7 / 0.8 / 0.9
+      return (
+        `crop='min(iw,ih*9/16/${f})':ih,` +
+        `scale=1080:-2,` +
+        `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1`
+      );
+    }
+
+    let vf;
+    const partial = fmt.match(/^crop(70|80|90)$/);
+    if (fmt === "blur") vf = blurFilter;
+    else if (fmt === "pad") vf = padFilter;
+    else if (partial) vf = partialCrop(parseInt(partial[1]));
+    else vf = cropFilter;
+
+    console.log(`[v6-formats] Format: ${fmt}`);
 
     await runCmd("ffmpeg", [
       "-y",
