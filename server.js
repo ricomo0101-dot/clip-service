@@ -134,10 +134,11 @@ app.post("/clip", async (req, res) => {
       "--merge-output-format",
       "mp4",
       // Mit Cookies funktioniert der web-Client zuverlässig; ios als Fallback.
-      // 2026: android_vr wirft 403 (PO-Token nötig). tv-Client ist aktuell am
-      // zuverlässigsten ohne PO-Token; web/mweb als Fallback mit Cookies.
+      // 2026: android_vr und mweb werfen 403 (PO-Token nötig). Der tv-Client
+      // kommt aktuell ohne PO-Token durch. Bewusst OHNE web/mweb-Fallback, damit
+      // yt-dlp nicht auf die blockierten Clients ausweicht.
       "--extractor-args",
-      "youtube:player_client=tv,web,mweb",
+      "youtube:player_client=tv",
       "-o",
       fullPath,
       videoUrl,
