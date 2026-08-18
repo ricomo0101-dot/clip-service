@@ -134,8 +134,10 @@ app.post("/clip", async (req, res) => {
       "--merge-output-format",
       "mp4",
       // Mit Cookies funktioniert der web-Client zuverlässig; ios als Fallback.
+      // 2026: android_vr wirft 403 (PO-Token nötig). tv-Client ist aktuell am
+      // zuverlässigsten ohne PO-Token; web/mweb als Fallback mit Cookies.
       "--extractor-args",
-      "youtube:player_client=default,web_safari,ios",
+      "youtube:player_client=tv,web,mweb",
       "-o",
       fullPath,
       videoUrl,
